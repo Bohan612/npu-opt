@@ -6,6 +6,7 @@
 
 namespace mlir::npu {
 std::unique_ptr<mlir::Pass> createPingPongDMAPipeliningPass();
+std::unique_ptr<mlir::Pass> createTileMatmulPass();
 } // namespace mlir::npu
 
 int main(int argc, char **argv) {
@@ -15,6 +16,9 @@ int main(int argc, char **argv) {
 
   mlir::registerPass([]() -> std::unique_ptr<mlir::Pass> {
     return mlir::npu::createPingPongDMAPipeliningPass();
+  });
+  mlir::registerPass([]() -> std::unique_ptr<mlir::Pass> {
+    return mlir::npu::createTileMatmulPass();
   });
 
   return mlir::asMainReturnCode(

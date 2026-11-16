@@ -1,3 +1,10 @@
+//===- PingPongDMAPipelining.cpp - SRAM Double-Buffering & Async DMA ------===//
+//
+// Clean-room MLIR pass transforming single-buffered scratchpad SRAM loops into
+// software-pipelined ping-pong async DMA schedules (Prologue / Steady / Epilogue).
+//
+//===----------------------------------------------------------------------===//
+
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
@@ -7,6 +14,7 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Pass/Pass.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
 
 using namespace mlir;
@@ -77,6 +85,35 @@ static void emitAsyncDMAWait(OpBuilder &b, Location loc, Value tagMemRef,
   memref::DmaWaitOp::create(b, loc, tagMemRef, tagIndices, numElemsVal);
 }
 
+/// Collect in-loop ops needed to compute `roots` in topological order.
+static void collectInLoopSlice(Block *body, ArrayRef<Value> roots,
+                               SmallVector<Operation *> &sliceOps) {
+  DenseSet<Operation *> needed;
+  SmallVector<Operation *> worklist;
+
+  for (Value v : roots) {
+    if (Operation *defOp = v.getDefiningOp()) {
+      if (defOp->getBlock() == body && needed.insert(defOp).second)
+        worklist.push_back(defOp);
+    }
+  }
+
+  while (!worklist.empty()) {
+    Operation *curr = worklist.pop_back_val();
+    for (Value operand : curr->getOperands()) {
+      if (Operation *defOp = operand.getDefiningOp()) {
+        if (defOp->getBlock() == body && needed.insert(defOp).second)
+          worklist.push_back(defOp);
+      }
+    }
+  }
+
+  for (Operation &op : body->without_terminator()) {
+    if (needed.contains(&op))
+      sliceOps.push_back(&op);
+  }
+}
+
 struct PingPongDMAPipeliningPass
     : public PassWrapper<PingPongDMAPipeliningPass,
                          OperationPass<func::FuncOp>> {
@@ -112,9 +149,9 @@ private:
   LogicalResult pipelineLoop(scf::ForOp forOp) {
     Block *body = forOp.getBody();
     SmallVector<TileTransfer> transfers;
-    SmallVector<Operation *> addressOps;
     SmallVector<Operation *> computeOps;
 
+    // 1. Identify DDR->SRAM memref.copy transfers and compute operations.
     for (Operation &op : body->without_terminator()) {
       if (auto copyOp = dyn_cast<memref::CopyOp>(&op)) {
         auto dstAlloc = copyOp.getTarget().getDefiningOp<memref::AllocOp>();
@@ -134,16 +171,27 @@ private:
 
         transfers.push_back(
             {dstAlloc, copyOp, copyOp.getSource(), dstType, numElems});
-      } else if (isa<memref::SubViewOp>(op) ||
-                 op.getDialect()->getNamespace() == "arith") {
-        addressOps.push_back(&op);
-      } else {
+      } else if (isa<linalg::LinalgOp>(&op)) {
         computeOps.push_back(&op);
       }
     }
 
     if (transfers.empty() || computeOps.empty())
       return failure();
+
+    // Compute exact backward slices inside the loop for DMA address ops vs.
+    // compute helper ops (such as output accumulator subviews).
+    SmallVector<Value> dmaRoots;
+    for (const TileTransfer &t : transfers)
+      dmaRoots.push_back(t.ddrSource);
+    SmallVector<Operation *> dmaAddrOps;
+    collectInLoopSlice(body, dmaRoots, dmaAddrOps);
+
+    SmallVector<Value> computeRoots;
+    for (Operation *op : computeOps)
+      computeRoots.append(op->getOperands().begin(), op->getOperands().end());
+    SmallVector<Operation *> computeHelperOps;
+    collectInLoopSlice(body, computeRoots, computeHelperOps);
 
     OpBuilder b(forOp);
     Location loc = forOp.getLoc();
@@ -157,6 +205,7 @@ private:
     Value c2 = arith::ConstantIndexOp::create(b, loc, 2);
     Value steadyUb = arith::SubIOp::create(b, loc, ub, step);
 
+    // 2. Promote single SRAM buffers -> 2x double-buffers + 2x1 DMA tag buffers.
     SmallVector<Value> doubleBuffers;
     SmallVector<Value> tagBuffers;
     auto tagMemRefType = MemRefType::get({2, 1}, b.getI32Type(),
@@ -178,10 +227,10 @@ private:
       tagBuffers.push_back(tagAlloc);
     }
 
-    // Prologue: Prefetch Tile 0 into slot 0 (Ping)
+    // 3. Prologue: Prefetch Tile 0 into slot 0 (Ping)
     IRMapping prologueMap;
     prologueMap.map(forOp.getInductionVar(), lb);
-    for (Operation *op : addressOps)
+    for (Operation *op : dmaAddrOps)
       b.clone(*op, prologueMap);
 
     for (size_t i = 0; i < transfers.size(); ++i) {
@@ -192,7 +241,7 @@ private:
                         transfers[i].numElements);
     }
 
-    // Steady-State Loop: [lb, ub - step)
+    // 4. Steady-State Loop: [lb, ub - step)
     auto newForOp = scf::ForOp::create(
         b, loc, lb, steadyUb, step, ValueRange{c0},
         [&](OpBuilder &loopB, Location loopLoc, Value iv, ValueRange iterArgs) {
@@ -204,7 +253,7 @@ private:
 
           IRMapping nextAddrMap;
           nextAddrMap.map(forOp.getInductionVar(), nextIv);
-          for (Operation *op : addressOps)
+          for (Operation *op : dmaAddrOps)
             loopB.clone(*op, nextAddrMap);
 
           for (size_t i = 0; i < transfers.size(); ++i) {
@@ -225,13 +274,15 @@ private:
             computeMap.map(transfers[i].sramAlloc.getResult(), curView);
           }
 
+          for (Operation *op : computeHelperOps)
+            loopB.clone(*op, computeMap);
           for (Operation *op : computeOps)
             loopB.clone(*op, computeMap);
 
           scf::YieldOp::create(loopB, loopLoc, ValueRange{nextStage});
         });
 
-    // Epilogue: Wait and compute final tile
+    // 5. Epilogue: Wait and compute final tile
     Value finalStage = newForOp.getResult(0);
     Value finalSlot = arith::RemUIOp::create(b, loc, finalStage, c2);
 
@@ -245,9 +296,12 @@ private:
       epilogueMap.map(transfers[i].sramAlloc.getResult(), finalView);
     }
 
+    for (Operation *op : computeHelperOps)
+      b.clone(*op, epilogueMap);
     for (Operation *op : computeOps)
       b.clone(*op, epilogueMap);
 
+    // 6. Erase old loop and dead single-buffered SRAM allocations.
     forOp.erase();
     for (TileTransfer &t : transfers) {
       if (t.sramAlloc.use_empty())
