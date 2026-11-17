@@ -5,6 +5,7 @@
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
 
 namespace mlir::npu {
+std::unique_ptr<mlir::Pass> createLowerDMAToLLVMPass();
 std::unique_ptr<mlir::Pass> createPingPongDMAPipeliningPass();
 std::unique_ptr<mlir::Pass> createTileMatmulPass();
 } // namespace mlir::npu
@@ -14,6 +15,9 @@ int main(int argc, char **argv) {
   mlir::registerAllDialects(registry);
   mlir::registerAllPasses();
 
+  mlir::registerPass([]() -> std::unique_ptr<mlir::Pass> {
+    return mlir::npu::createLowerDMAToLLVMPass();
+  });
   mlir::registerPass([]() -> std::unique_ptr<mlir::Pass> {
     return mlir::npu::createPingPongDMAPipeliningPass();
   });

@@ -1,4 +1,5 @@
 add_library(NPUPasses STATIC
+  NPUPasses/LowerDMAToLLVM.cpp
   NPUPasses/PingPongDMAPipelining.cpp
   NPUPasses/TileMatmul.cpp
 )
@@ -10,6 +11,8 @@ target_link_libraries(NPUPasses
   MLIRArithDialect
   MLIRFuncDialect
   MLIRIR
+  MLIRLLVMCommonConversion
+  MLIRLLVMDialect
   MLIRLinalgDialect
   MLIRMemRefDialect
   MLIRPass
