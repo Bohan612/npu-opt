@@ -14,4 +14,10 @@ target_link_libraries(npu-opt
   MLIRRegisterAllPasses
   MLIROptLib
   NPUPasses
+  MLIRNPUDialect
+  MLIRControlFlowToLLVM
+  MLIRFuncToLLVM
+  MLIRMemRefToLLVM
+  MLIRReconcileUnrealizedCasts
+  MLIRSCFToControlFlow
 )

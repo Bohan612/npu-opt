@@ -1,4 +1,7 @@
 add_library(NPUPasses STATIC
+  NPUPasses/VectorizeMatmul.cpp
+  NPUPasses/ConvertToNPUDialect.cpp
+  NPUPasses/ConvertNPUToLLVM.cpp
   NPUPasses/LowerDMAToLLVM.cpp
   NPUPasses/PingPongDMAPipelining.cpp
   NPUPasses/TileMatmul.cpp
@@ -15,9 +18,16 @@ target_link_libraries(NPUPasses
   MLIRLLVMDialect
   MLIRLinalgDialect
   MLIRMemRefDialect
+  MLIRMemRefTransforms
+  MLIRAffineToStandard
+  MLIRVectorToLLVMPass
+  MLIRVectorToSCF
+  MLIRArithToLLVM
   MLIRPass
   MLIRSCFDialect
   MLIRSCFTransforms
   MLIRTilingInterface
   MLIRSupport
 )
+
+add_subdirectory(NPU)

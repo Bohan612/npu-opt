@@ -1,31 +1,25 @@
-// RUN: npu-opt %s --npu-tile-matmul --npu-ping-pong-dma | FileCheck %s
+// RUN: npu-opt %s --npu-compile-pipeline | FileCheck %s
 
-func.func @e2e_matmul(%ddr_a: memref<64x256xf16>,
-                      %ddr_b: memref<256x64xf16>,
-                      %sram_c: memref<64x64xf16, 1>) {
-  linalg.matmul ins(%ddr_a, %ddr_b : memref<64x256xf16>, memref<256x64xf16>)
-                outs(%sram_c : memref<64x64xf16, 1>)
+// CHECK-DAG: llvm.func @npu_cube_mma(!llvm.array<16 x vector<16xf16>>, !llvm.array<16 x vector<16xf16>>, !llvm.array<16 x vector<16xf16>>) -> !llvm.array<16 x vector<16xf16>>
+// CHECK-DAG: llvm.func @npu_dma_wait(i64)
+// CHECK-DAG: llvm.func @npu_dma_push(!llvm.ptr, !llvm.ptr<1>, i64) -> i64
+
+// CHECK-LABEL: llvm.func @matmul_128x128x128_e2e
+// CHECK-NOT:     linalg.matmul
+// CHECK-NOT:     memref.dma_start
+// CHECK-NOT:     vector.contract
+// CHECK-NOT:     npu.dma_load
+// CHECK-NOT:     npu.mma
+// CHECK-NOT:     builtin.unrealized_conversion_cast
+// CHECK:         llvm.call @npu_dma_push
+// CHECK:         llvm.call @npu_dma_wait
+// CHECK:         llvm.call @npu_cube_mma
+// CHECK:         llvm.return
+func.func @matmul_128x128x128_e2e(
+    %A: memref<128x128xf16>,
+    %B: memref<128x128xf16>,
+    %C: memref<128x128xf16>) {
+  linalg.matmul ins(%A, %B : memref<128x128xf16>, memref<128x128xf16>)
+                outs(%C : memref<128x128xf16>)
   return
 }
-
-// CHECK-LABEL: func.func @e2e_matmul
-// Double-buffered SRAM allocations (Ping & Pong) + DMA tag buffers
-// CHECK:       memref.alloc() : memref<2x64x64xf16, 1 : i32>
-// CHECK:       memref.alloc() : memref<2x1xi32, 1 : i32>
-// CHECK:       memref.alloc() : memref<2x64x64xf16, 1 : i32>
-// CHECK:       memref.alloc() : memref<2x1xi32, 1 : i32>
-// Prologue DMA prefetch
-// CHECK:       memref.dma_start
-// CHECK:       memref.dma_start
-// Steady-state software-pipelined loop
-// CHECK:       scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%{{.*}} = %{{.*}}) -> (index)
-// CHECK:         memref.dma_start
-// CHECK:         memref.dma_start
-// CHECK:         memref.dma_wait
-// CHECK:         memref.dma_wait
-// CHECK:         linalg.matmul
-// CHECK:         scf.yield
-// Epilogue drain
-// CHECK:       memref.dma_wait
-// CHECK:       memref.dma_wait
-// CHECK:       linalg.matmul

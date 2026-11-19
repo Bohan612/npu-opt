@@ -22,5 +22,7 @@ include_directories(${PROJECT_SOURCE_DIR}/include)
 link_directories(${LLVM_BUILD_LIBRARY_DIR})
 add_definitions(${LLVM_DEFINITIONS})
 
+include_directories(${CMAKE_BINARY_DIR}/include)
+add_subdirectory(include/NPU)
 add_subdirectory(lib)
 add_subdirectory(tools)
