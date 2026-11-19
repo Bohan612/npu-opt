@@ -2,7 +2,7 @@
 
 `npu-opt` is an out-of-tree MLIR driver targeting a custom NPU architecture. It lowers `linalg` / `memref` matrix multiplication workloads through SRAM tiling, double-buffered ping-pong DMA scheduling, 16x16 vectorization, custom `npu` dialect lowering, and LLVM IR intrinsics (`@npu_dma_push`, `@npu_dma_wait`, `@npu_cube_mma`).
 
-## Step-by-Step Guide to Developing This Compiler
+## Step-by-Step Guide to Develope This Compiler
 
 ### 1. Define the Custom `npu` Dialect (`include/NPU/`, `lib/NPU/`)
 * Define custom types (such as `!npu.token`) and operations (such as `npu.mma` and DMA push/wait ops).
