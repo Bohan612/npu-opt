@@ -1,8 +1,8 @@
-//===- TileMatmul.cpp - K-Dimension Tiling & SRAM Scratchpad Promotion ----===//
+//===- TileMatmul.cpp - Macro-Tiling & SRAM Scratchpad Promotion ---------===//
 //
-// Tiles linalg.matmul along the reduction dimension (K) using TilingInterface
+// Tiles linalg.matmul across (M, N, K) macro-tiles using TilingInterface
 // and promotes tiled DDR subviews into scratchpad SRAM (memory_space = 1) so
-// downstream passes can apply ping-pong async DMA pipelining.
+// downstream passes can apply ping-pong async DMA pipelining and 16x16 MMA.
 //
 //===----------------------------------------------------------------------===//
 
@@ -25,10 +25,26 @@ struct TileMatmulPass
     : public PassWrapper<TileMatmulPass, OperationPass<func::FuncOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(TileMatmulPass)
 
+  TileMatmulPass() = default;
+  TileMatmulPass(const TileMatmulPass &other) {
+    macroM = other.macroM.getValue();
+    macroN = other.macroN.getValue();
+    macroK = other.macroK.getValue();
+  }
+
+  Option<int64_t> macroM{*this, "macro-m",
+                         llvm::cl::desc("Macro-tile size along M (0 = untiled)"),
+                         llvm::cl::init(64)};
+  Option<int64_t> macroN{*this, "macro-n",
+                         llvm::cl::desc("Macro-tile size along N (0 = untiled)"),
+                         llvm::cl::init(64)};
+  Option<int64_t> macroK{*this, "macro-k",
+                         llvm::cl::desc("Macro-tile size along K (0 = untiled)"),
+                         llvm::cl::init(64)};
+
   StringRef getArgument() const final { return "npu-tile-matmul"; }
   StringRef getDescription() const final {
-    return "Tile linalg.matmul along K and promote operands to SRAM "
-           "(memory_space = 1)";
+    return "Tile linalg.matmul into SRAM macro-tiles (memory_space = 1)";
   }
 
   void getDependentDialects(DialectRegistry &registry) const override {
@@ -42,7 +58,6 @@ struct TileMatmulPass
 
     SmallVector<linalg::MatmulOp> matmuls;
     funcOp.walk([&](linalg::MatmulOp op) {
-      // Only tile matmuls reading directly from global DDR (memory_space == 0).
       auto lhsType = dyn_cast<MemRefType>(op.getInputs()[0].getType());
       auto rhsType = dyn_cast<MemRefType>(op.getInputs()[1].getType());
       if (lhsType && rhsType && lhsType.hasStaticShape() &&
@@ -65,11 +80,10 @@ private:
                                      linalg::MatmulOp matmulOp) {
     auto tilingOp = cast<TilingInterface>(matmulOp.getOperation());
 
-    // Tile only the reduction dimension K = 64 (M = 0, N = 0, K = 64).
     SmallVector<OpFoldResult> tileSizes = {
-        rewriter.getIndexAttr(0),
-        rewriter.getIndexAttr(0),
-        rewriter.getIndexAttr(64),
+        rewriter.getIndexAttr(macroM.getValue()),
+        rewriter.getIndexAttr(macroN.getValue()),
+        rewriter.getIndexAttr(macroK.getValue()),
     };
 
     scf::SCFTilingOptions tilingOptions;
@@ -81,34 +95,29 @@ private:
     if (failed(tiledResult))
       return failure();
 
-    // Replace the untiled matmul with the newly generated tiled scf.for loop.
     rewriter.replaceOp(matmulOp, tiledResult->replacements);
 
     if (tiledResult->loops.empty() || tiledResult->tiledOps.empty())
       return failure();
 
-    auto forOp = cast<scf::ForOp>(tiledResult->loops.front());
+    Operation *outerLoop = tiledResult->loops.front();
     auto tiledMatmul = cast<linalg::MatmulOp>(tiledResult->tiledOps.front());
 
-    // Promote the two tiled DDR input subviews into scratchpad SRAM (space 1).
     Location loc = tiledMatmul.getLoc();
     for (unsigned idx = 0; idx < 2; ++idx) {
       Value ddrSlice = tiledMatmul.getInputs()[idx];
       auto sliceType = cast<MemRefType>(ddrSlice.getType());
 
-      // Allocate static contiguous SRAM buffer outside the loop.
-      rewriter.setInsertionPoint(forOp);
+      rewriter.setInsertionPoint(outerLoop);
       auto sramType = MemRefType::get(sliceType.getShape(),
                                       sliceType.getElementType(),
                                       MemRefLayoutAttrInterface{},
                                       rewriter.getI32IntegerAttr(1));
       Value sramAlloc = memref::AllocOp::create(rewriter, loc, sramType);
 
-      // Copy DDR slice -> SRAM buffer right before the tiled matmul.
       rewriter.setInsertionPoint(tiledMatmul);
       memref::CopyOp::create(rewriter, loc, ddrSlice, sramAlloc);
 
-      // Point the tiled matmul input to the fast SRAM buffer.
       tiledMatmul.setOperand(idx, sramAlloc);
     }
 
