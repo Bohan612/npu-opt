@@ -8,6 +8,8 @@
 // CHECK-NOT:     npu.dma_wait
 // CHECK-NOT:     npu.mma
 // CHECK-NOT:     builtin.unrealized_conversion_cast
+// CHECK:         llvm.getelementptr %{{.*}}[%{{.*}}] : (!llvm.ptr, i64) -> !llvm.ptr, f16
+// CHECK:         llvm.getelementptr %{{.*}}[%{{.*}}] : (!llvm.ptr<1>, i64) -> !llvm.ptr<1>, f16
 // CHECK:         %[[BYTES:.*]] = llvm.mlir.constant(8192 : i64) : i64
 // CHECK:         %[[TOK:.*]] = llvm.call @npu_dma_push(%{{.*}}, %{{.*}}, %[[BYTES]]) : (!llvm.ptr, !llvm.ptr<1>, i64) -> i64
 // CHECK:         llvm.call @npu_dma_wait(%[[TOK]]) : (i64) -> ()

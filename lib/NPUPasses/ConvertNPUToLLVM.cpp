@@ -37,10 +37,12 @@ struct DMALoadToLLVMPattern : public ConvertOpToLLVMPattern<npu::DMALoadOp> {
 
     MemRefDescriptor srcDesc(adaptor.getSrc());
     MemRefDescriptor dstDesc(adaptor.getDst());
-    Value srcPtr = srcDesc.alignedPtr(rewriter, loc);
-    Value dstPtr = dstDesc.alignedPtr(rewriter, loc);
-
     auto memrefType = cast<MemRefType>(op.getSrc().getType());
+    auto dstMemRefType = cast<MemRefType>(op.getDst().getType());
+    Type srcElemTy = typeConverter->convertType(memrefType.getElementType());
+    Type dstElemTy = typeConverter->convertType(dstMemRefType.getElementType());
+    Value srcPtr = LLVM::GEPOp::create(rewriter, loc, srcDesc.alignedPtr(rewriter, loc).getType(), srcElemTy, srcDesc.alignedPtr(rewriter, loc), ValueRange{srcDesc.offset(rewriter, loc)});
+    Value dstPtr = LLVM::GEPOp::create(rewriter, loc, dstDesc.alignedPtr(rewriter, loc).getType(), dstElemTy, dstDesc.alignedPtr(rewriter, loc), ValueRange{dstDesc.offset(rewriter, loc)});
     int64_t numBytes = memrefType.getNumElements() *
                        (memrefType.getElementTypeBitWidth() / 8);
     Value bytesVal = LLVM::ConstantOp::create(
