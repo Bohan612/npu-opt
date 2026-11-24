@@ -31,3 +31,4 @@ target_link_libraries(NPUPasses
 )
 
 add_subdirectory(NPU)
+add_subdirectory(Transforms)
