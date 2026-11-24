@@ -1,3 +1,9 @@
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/Dialect/Affine/IR/AffineOps.h"
+#include "mlir/Transforms/Passes.h"
+#include "mlir/Dialect/MemRef/Transforms/Passes.h"
+#include "mlir/Conversion/AffineToStandard/AffineToStandard.h"
+#include "mlir/Conversion/VectorToSCF/VectorToSCF.h"
 #include "mlir/Conversion/XeVMToLLVM/XeVMToLLVM.h"
 #include "mlir/Conversion/VectorToLLVM/ConvertVectorToLLVM.h"
 #include "mlir/Conversion/PtrToLLVM/PtrToLLVM.h"
@@ -25,6 +31,7 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/ROCDLDialect.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/Dialect/Linalg/Transforms/TilingInterfaceImpl.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Pass/PassManager.h"
@@ -47,8 +54,23 @@ static void registerNPUMatmulPipeline() {
       [](mlir::OpPassManager &pm) {
         pm.addNestedPass<mlir::func::FuncOp>(mlir::npu::createTileMatmulPass());
         pm.addNestedPass<mlir::func::FuncOp>(mlir::npu::createPingPongDMAPipeliningPass());
+        pm.addNestedPass<mlir::func::FuncOp>(mlir::npu::createVectorizeMatmulPass(false));
+        pm.addPass(mlir::createCanonicalizerPass());
+        pm.addPass(mlir::createCSEPass());
         pm.addNestedPass<mlir::func::FuncOp>(mlir::npu::createConvertToNPUDialectPass());
+        pm.addPass(mlir::memref::createExpandStridedMetadataPass());
+        pm.addPass(mlir::createLowerAffinePass());
+        pm.addPass(mlir::createCanonicalizerPass());
+        pm.addPass(mlir::createConvertVectorToSCFPass());
+        pm.addPass(mlir::createSCFToControlFlowPass());
+        pm.addPass(mlir::createConvertVectorToLLVMPass());
         pm.addPass(mlir::npu::createConvertNPUToLLVMPass());
+        pm.addPass(mlir::createArithToLLVMConversionPass());
+        pm.addPass(mlir::createConvertFuncToLLVMPass());
+        pm.addPass(mlir::createFinalizeMemRefToLLVMConversionPass());
+        pm.addPass(mlir::createConvertControlFlowToLLVMPass());
+        pm.addPass(mlir::createCanonicalizerPass());
+        pm.addPass(mlir::createReconcileUnrealizedCastsPass());
       });
 }
 // 
@@ -98,8 +120,11 @@ int main(int argc, char **argv) {
                   mlir::linalg::LinalgDialect,
                   mlir::memref::MemRefDialect,
                   mlir::scf::SCFDialect,
+                  mlir::affine::AffineDialect,
+                  mlir::vector::VectorDialect,
                   mlir::npu::NPUDialect>();
 
+  mlir::linalg::registerTilingInterfaceExternalModels(registry);
   registerGPUMatmulPipeline();
   registerNPUMatmulPipeline();
 
