@@ -3,6 +3,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
@@ -69,6 +70,23 @@ struct VectorContractToNPUMMAPattern
   }
 };
 
+
+struct GenericAddToNPUVecAddPattern : public OpConversionPattern<linalg::GenericOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(linalg::GenericOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    // Ensure it is our 2-input bias addition
+    if (op.getNumDpsInputs() != 2) return failure();
+    
+    // Using getOperands() avoids MLIR version API mismatches.
+    // Operand 0 is the Matrix C tile, Operand 1 is the Bias tile.
+    rewriter.replaceOpWithNewOp<npu::VecAddOp>(op, adaptor.getOperands()[0], adaptor.getOperands()[1]);
+    return success();
+  }
+};
+
 struct ConvertToNPUDialectPass
     : public PassWrapper<ConvertToNPUDialectPass, OperationPass<func::FuncOp>> {
 public:
@@ -101,7 +119,7 @@ public:
 
     RewritePatternSet patterns(ctx);
     patterns.add<DMAStartToNPULoadPattern, DMAWaitToNPUWaitPattern,
-                 VectorContractToNPUMMAPattern>(typeConverter, ctx);
+                 VectorContractToNPUMMAPattern, GenericAddToNPUVecAddPattern>(typeConverter, ctx);
 
     if (failed(applyPartialConversion(funcOp, target, std::move(patterns)))) {
       signalPassFailure();

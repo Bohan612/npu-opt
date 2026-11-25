@@ -2,6 +2,7 @@
 #include "mlir/Conversion/FuncToLLVM/ConvertFuncToLLVMPass.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
+#include "mlir/Dialect/Affine/IR/ValueBoundsOpInterfaceImpl.h"
 #include "mlir/Transforms/Passes.h"
 #include "mlir/Dialect/MemRef/Transforms/Passes.h"
 #include "mlir/Conversion/AffineToStandard/AffineToStandard.h"
@@ -39,9 +40,12 @@
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Pass/PassRegistry.h"
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
+#include "NPU/NPUDialect.h"
 
 // NPU Pass Declarations
 namespace mlir::npu {
+  void registerFuseEpiloguePass();
+  std::unique_ptr<mlir::Pass> createFuseEpiloguePass();
   std::unique_ptr<mlir::Pass> createTileMatmulPass();
   std::unique_ptr<mlir::Pass> createPingPongDMAPipeliningPass();
   std::unique_ptr<mlir::Pass> createVectorizeMatmulPass(bool);
@@ -54,7 +58,7 @@ static void registerNPUMatmulPipeline() {
       "npu-compile-pipeline",
       "End-to-end NPU compilation pipeline (Linalg -> SRAM Ping-Pong DMA -> NPU Dialect -> LLVM)",
       [](mlir::OpPassManager &pm) {
-        pm.addNestedPass<mlir::func::FuncOp>(mlir::npu::createTileMatmulPass());
+        pm.addNestedPass<mlir::func::FuncOp>(mlir::npu::createFuseEpiloguePass());
         pm.addNestedPass<mlir::func::FuncOp>(mlir::npu::createPingPongDMAPipeliningPass());
         pm.addNestedPass<mlir::func::FuncOp>(mlir::npu::createVectorizeMatmulPass(false));
         pm.addPass(mlir::createCanonicalizerPass());
@@ -75,9 +79,6 @@ static void registerNPUMatmulPipeline() {
         pm.addPass(mlir::createReconcileUnrealizedCastsPass());
       });
 }
-// 
-#include "NPU/NPUDialect.h"// #include "NPU/NPUOps.h"// namespace mlir::npu {// std::unique_ptr<mlir::Pass> createConvertToNPUDialectPass();// std::unique_ptr<mlir::Pass> createConvertNPUToLLVMPass();// } // namespace mlir::npu//   registry.insert<mlir::npu::NPUDialect>();//       "npu-compile-pipeline",//       "End-to-end NPU compilation pipeline (Linalg -> SRAM Ping-Pong DMA -> NPU Dialect -> LLVM)",//         pm.addNestedPass<mlir::func::FuncOp>(mlir::npu::createTileMatmulPass());//         pm.addNestedPass<mlir::func::FuncOp>(mlir::npu::createPingPongDMAPipeliningPass());//         pm.addNestedPass<mlir::func::FuncOp>(mlir::npu::createVectorizeMatmulPass(false));//         pm.addNestedPass<mlir::func::FuncOp>(mlir::npu::createConvertToNPUDialectPass());//         pm.addPass(mlir::npu::createConvertNPUToLLVMPass());
-//       mlir::MlirOptMain(argc, argv, "NPU & GPU Optimizer Driver\n", registry));
 
 static void registerGPUMatmulPipeline() {
   static mlir::PassPipelineRegistration<> reg(
@@ -127,6 +128,9 @@ int main(int argc, char **argv) {
                   mlir::npu::NPUDialect>();
 
   mlir::linalg::registerTilingInterfaceExternalModels(registry);
+  mlir::affine::registerValueBoundsOpInterfaceExternalModels(registry);
+  mlir::npu::registerFuseEpiloguePass();
+  
   registerGPUMatmulPipeline();
   registerNPUMatmulPipeline();
 

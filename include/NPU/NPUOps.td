@@ -32,3 +32,16 @@ def NPU_MMAOp : NPU_Op<"mma", [Pure, AllTypesMatch<["acc", "res"]>]> {
 }
 
 #endif // NPU_OPS_TD
+
+def NPU_VecAddOp : NPU_Op<"vec_add", []> {
+  let summary = "NPU 16x16 vector-bias addition";
+  let description = [{
+    Executes a 16x16 vector addition in the NPU's Vector ALU. 
+    Adds a 1x16 bias tile to a 16x16 matrix tile currently in SRAM.
+  }];
+  let arguments = (ins
+    Arg<AnyMemRef, "the 16x16 SRAM matrix tile (in/out)", [MemWrite]>:$matrix_tile,
+    Arg<AnyMemRef, "the 1x16 SRAM bias tile", [MemRead]>:$bias_tile
+  );
+  let assemblyFormat = "$matrix_tile `,` $bias_tile attr-dict `:` type($matrix_tile) `,` type($bias_tile)";
+}

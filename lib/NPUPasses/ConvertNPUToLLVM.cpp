@@ -5,6 +5,7 @@
 #include "mlir/Conversion/LLVMCommon/Pattern.h"
 #include "mlir/Conversion/LLVMCommon/TypeConverter.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Pass/Pass.h"
 
@@ -93,8 +94,78 @@ struct MMAToLLVMPattern : public ConvertOpToLLVMPattern<npu::MMAOp> {
                                    {vecType, vecType, vecType});
     auto call = LLVM::CallOp::create(
         rewriter, loc, fn,
-        ValueRange{adaptor.getLhs(), adaptor.getRhs(), adaptor.getAcc()});
+        ValueRange{adaptor.getOperands()[0], adaptor.getOperands()[1], adaptor.getAcc()});
     rewriter.replaceOp(op, call.getResult());
+    return success();
+  }
+};
+
+
+struct NPUVecAddToLLVMPattern : public ConvertOpToLLVMPattern<npu::VecAddOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+
+  LogicalResult
+  matchAndRewrite(npu::VecAddOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    auto module = op->getParentOfType<ModuleOp>();
+    auto voidType = LLVM::LLVMVoidType::get(rewriter.getContext());
+
+    // 1. Unpack the MemRef descriptors to get the raw aligned pointers and offsets
+    MemRefDescriptor lhsDesc(adaptor.getOperands()[0]);
+    MemRefDescriptor rhsDesc(adaptor.getOperands()[1]);
+    
+    auto lhsMemRefType = cast<MemRefType>(op->getOperand(0).getType());
+    auto rhsMemRefType = cast<MemRefType>(op->getOperand(1).getType());
+    
+    Type lhsElemTy = typeConverter->convertType(lhsMemRefType.getElementType());
+    Type rhsElemTy = typeConverter->convertType(rhsMemRefType.getElementType());
+
+    // 2. Generate LLVM GetElementPtr (GEP) to compute the actual starting memory addresses
+    Value lhsPtr = LLVM::GEPOp::create(rewriter, loc, lhsDesc.alignedPtr(rewriter, loc).getType(), lhsElemTy, lhsDesc.alignedPtr(rewriter, loc), ValueRange{lhsDesc.offset(rewriter, loc)});
+    Value rhsPtr = LLVM::GEPOp::create(rewriter, loc, rhsDesc.alignedPtr(rewriter, loc).getType(), rhsElemTy, rhsDesc.alignedPtr(rewriter, loc), ValueRange{rhsDesc.offset(rewriter, loc)});
+
+    // 3. Declare or retrieve the C-harness function
+    auto fn = getOrInsertRuntimeFn(module, rewriter, "npu_vec_add_c_harness", voidType,
+                                   {lhsPtr.getType(), rhsPtr.getType()});
+                                   
+    // 4. Emit the call to the C-simulator
+    LLVM::CallOp::create(rewriter, loc, fn, ValueRange{lhsPtr, rhsPtr});
+
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
+
+struct LinalgMatmulToLLVMPattern : public ConvertOpToLLVMPattern<linalg::MatmulOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+
+  LogicalResult matchAndRewrite(linalg::MatmulOp op, OpAdaptor adaptor, ConversionPatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    auto module = op->getParentOfType<ModuleOp>();
+    auto voidType = LLVM::LLVMVoidType::get(rewriter.getContext());
+
+    MemRefDescriptor aDesc(adaptor.getOperands()[0]);
+    MemRefDescriptor bDesc(adaptor.getOperands()[1]);
+    MemRefDescriptor cDesc(adaptor.getOperands()[2]);
+
+    auto aMemRefType = cast<MemRefType>(op->getOperand(0).getType());
+    auto bMemRefType = cast<MemRefType>(op->getOperand(1).getType());
+    auto cMemRefType = cast<MemRefType>(op->getOperand(2).getType());
+
+    Type aElemTy = typeConverter->convertType(aMemRefType.getElementType());
+    Type bElemTy = typeConverter->convertType(bMemRefType.getElementType());
+    Type cElemTy = typeConverter->convertType(cMemRefType.getElementType());
+
+    Value aPtr = LLVM::GEPOp::create(rewriter, loc, aDesc.alignedPtr(rewriter, loc).getType(), aElemTy, aDesc.alignedPtr(rewriter, loc), ValueRange{aDesc.offset(rewriter, loc)});
+    Value bPtr = LLVM::GEPOp::create(rewriter, loc, bDesc.alignedPtr(rewriter, loc).getType(), bElemTy, bDesc.alignedPtr(rewriter, loc), ValueRange{bDesc.offset(rewriter, loc)});
+    Value cPtr = LLVM::GEPOp::create(rewriter, loc, cDesc.alignedPtr(rewriter, loc).getType(), cElemTy, cDesc.alignedPtr(rewriter, loc), ValueRange{cDesc.offset(rewriter, loc)});
+
+    auto fn = getOrInsertRuntimeFn(module, rewriter, "npu_cube_mma_c_harness", voidType, {aPtr.getType(), bPtr.getType(), cPtr.getType()});
+    LLVM::CallOp::create(rewriter, loc, fn, ValueRange{aPtr, bPtr, cPtr});
+
+    rewriter.eraseOp(op);
     return success();
   }
 };
@@ -127,7 +198,7 @@ public:
     target.addIllegalDialect<npu::NPUDialect>();
 
     RewritePatternSet patterns(ctx);
-    patterns.add<DMALoadToLLVMPattern, DMAWaitToLLVMPattern, MMAToLLVMPattern>(
+    patterns.add<DMALoadToLLVMPattern, DMAWaitToLLVMPattern, MMAToLLVMPattern, NPUVecAddToLLVMPattern, LinalgMatmulToLLVMPattern>(
         typeConverter);
 
     if (failed(applyPartialConversion(module, target, std::move(patterns))))
