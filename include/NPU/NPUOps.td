@@ -14,6 +14,32 @@ def NPU_DMALoadOp : NPU_Op<"dma_load"> {
   let assemblyFormat = "$src `to` $dst attr-dict `:` type($src) `to` type($dst) `->` type($token)";
 }
 
+def NPU_DMALoad2DOp : NPU_Op<"dma_load_2d"> {
+  let summary = "Asynchronously transfer a 2D strided tile from DRAM to SRAM";
+  let arguments = (ins
+    AnyMemRef:$src,
+    AnyMemRef:$dst,
+    Index:$rows,
+    Index:$cols,
+    Index:$stride
+  );
+  let results = (outs NPU_TokenType:$token);
+  let assemblyFormat = "$src `to` $dst `[` $rows `,` $cols `]` `stride` $stride attr-dict `:` type($src) `to` type($dst) `->` type($token)";
+}
+
+def NPU_DMAStore2DOp : NPU_Op<"dma_store_2d"> {
+  let summary = "Asynchronously transfer a 2D strided tile from SRAM to DRAM";
+  let arguments = (ins
+    AnyMemRef:$src,
+    AnyMemRef:$dst,
+    Index:$rows,
+    Index:$cols,
+    Index:$stride
+  );
+  let results = (outs NPU_TokenType:$token);
+  let assemblyFormat = "$src `to` $dst `[` $rows `,` $cols `]` `stride` $stride attr-dict `:` type($src) `to` type($dst) `->` type($token)";
+}
+
 def NPU_DMAWaitOp : NPU_Op<"dma_wait"> {
   let summary = "Block compute pipeline until async DMA token completes";
   let arguments = (ins NPU_TokenType:$token);
@@ -31,12 +57,10 @@ def NPU_MMAOp : NPU_Op<"mma", [Pure, AllTypesMatch<["acc", "res"]>]> {
   let assemblyFormat = "$lhs `,` $rhs `,` $acc attr-dict `:` type($lhs) `,` type($rhs) `->` type($res)";
 }
 
-#endif // NPU_OPS_TD
-
 def NPU_VecAddOp : NPU_Op<"vec_add", []> {
   let summary = "NPU 16x16 vector-bias addition";
   let description = [{
-    Executes a 16x16 vector addition in the NPU's Vector ALU. 
+    Executes a 16x16 vector addition in the NPU's Vector ALU.
     Adds a 1x16 bias tile to a 16x16 matrix tile currently in SRAM.
   }];
   let arguments = (ins
@@ -45,3 +69,5 @@ def NPU_VecAddOp : NPU_Op<"vec_add", []> {
   );
   let assemblyFormat = "$matrix_tile `,` $bias_tile attr-dict `:` type($matrix_tile) `,` type($bias_tile)";
 }
+
+#endif // NPU_OPS_TD

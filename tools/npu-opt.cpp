@@ -1,3 +1,4 @@
+#include "mlir/Dialect/Linalg/Passes.h"
 #include "mlir/Conversion/VectorToLLVM/ConvertVectorToLLVMPass.h"
 #include "mlir/Conversion/FuncToLLVM/ConvertFuncToLLVMPass.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
@@ -51,6 +52,12 @@ namespace mlir::npu {
   std::unique_ptr<mlir::Pass> createVectorizeMatmulPass(bool);
   std::unique_ptr<mlir::Pass> createConvertToNPUDialectPass();
   std::unique_ptr<mlir::Pass> createConvertNPUToLLVMPass();
+  void registerTileMatmulPass();
+  void registerVectorizeMatmulPass();
+  void registerPingPongDMAPipeliningPass();
+  void registerLowerDMAToLLVMPass();
+  void registerConvertToNPUDialectPass();
+  void registerConvertNPUToLLVMPass();
 }
 
 static void registerNPUMatmulPipeline() {
@@ -129,7 +136,31 @@ int main(int argc, char **argv) {
 
   mlir::linalg::registerTilingInterfaceExternalModels(registry);
   mlir::affine::registerValueBoundsOpInterfaceExternalModels(registry);
+  static mlir::PassPipelineRegistration<> regArithToLLVM(
+      "convert-arith-to-llvm", "Convert Arith dialect to LLVM dialect",
+      [](mlir::OpPassManager &pm) { pm.addPass(mlir::createArithToLLVMConversionPass()); });
+  static mlir::PassPipelineRegistration<> regFuncToLLVM(
+      "convert-func-to-llvm", "Convert Func dialect to LLVM dialect",
+      [](mlir::OpPassManager &pm) { pm.addPass(mlir::createConvertFuncToLLVMPass()); });
+  static mlir::PassPipelineRegistration<> regFinalizeMemRefToLLVM(
+      "finalize-memref-to-llvm", "Finalize MemRef to LLVM conversion",
+      [](mlir::OpPassManager &pm) { pm.addPass(mlir::createFinalizeMemRefToLLVMConversionPass()); });
+  static mlir::PassPipelineRegistration<> regSCFToCF(
+      "convert-scf-to-cf", "Convert SCF dialect to ControlFlow dialect",
+      [](mlir::OpPassManager &pm) { pm.addPass(mlir::createSCFToControlFlowPass()); });
+  static mlir::PassPipelineRegistration<> regReconcileCasts(
+      "reconcile-unrealized-casts", "Reconcile unrealized conversion casts",
+      [](mlir::OpPassManager &pm) { pm.addPass(mlir::createReconcileUnrealizedCastsPass()); });
+  static mlir::PassPipelineRegistration<> regLinalgToLoops(
+      "convert-linalg-to-loops", "Lower Linalg ops to SCF loops",
+      [](mlir::OpPassManager &pm) { pm.addPass(mlir::createConvertLinalgToLoopsPass()); });
   mlir::npu::registerFuseEpiloguePass();
+  mlir::npu::registerTileMatmulPass();
+  mlir::npu::registerVectorizeMatmulPass();
+  mlir::npu::registerPingPongDMAPipeliningPass();
+  mlir::npu::registerLowerDMAToLLVMPass();
+  mlir::npu::registerConvertToNPUDialectPass();
+  mlir::npu::registerConvertNPUToLLVMPass();
   
   registerGPUMatmulPipeline();
   registerNPUMatmulPipeline();

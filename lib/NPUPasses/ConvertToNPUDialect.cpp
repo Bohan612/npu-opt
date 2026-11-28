@@ -140,3 +140,9 @@ std::unique_ptr<Pass> createConvertToNPUDialectPass() {
   return std::make_unique<ConvertToNPUDialectPass>();
 }
 } // namespace mlir::npu
+
+namespace mlir {
+namespace npu {
+void registerConvertToNPUDialectPass() { PassRegistration<ConvertToNPUDialectPass>(); }
+} // namespace npu
+} // namespace mlir

@@ -319,3 +319,9 @@ std::unique_ptr<Pass> createPingPongDMAPipeliningPass() {
   return std::make_unique<PingPongDMAPipeliningPass>();
 }
 } // namespace mlir::npu
+
+namespace mlir {
+namespace npu {
+void registerPingPongDMAPipeliningPass() { PassRegistration<PingPongDMAPipeliningPass>(); }
+} // namespace npu
+} // namespace mlir

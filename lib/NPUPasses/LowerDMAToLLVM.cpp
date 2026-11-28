@@ -143,3 +143,9 @@ std::unique_ptr<Pass> createLowerDMAToLLVMPass() {
   return std::make_unique<LowerDMAToLLVMPass>();
 }
 } // namespace mlir::npu
+
+namespace mlir {
+namespace npu {
+void registerLowerDMAToLLVMPass() { PassRegistration<LowerDMAToLLVMPass>(); }
+} // namespace npu
+} // namespace mlir

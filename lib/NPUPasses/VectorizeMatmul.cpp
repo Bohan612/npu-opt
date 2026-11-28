@@ -104,3 +104,9 @@ std::unique_ptr<Pass> createVectorizeMatmulPass(bool lowerContract = true) {
   return std::make_unique<VectorizeMatmulPass>(lowerContract);
 }
 } // namespace mlir::npu
+
+namespace mlir {
+namespace npu {
+void registerVectorizeMatmulPass() { PassRegistration<VectorizeMatmulPass>(); }
+} // namespace npu
+} // namespace mlir

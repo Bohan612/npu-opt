@@ -132,3 +132,9 @@ std::unique_ptr<Pass> createTileMatmulPass() {
   return std::make_unique<TileMatmulPass>();
 }
 } // namespace mlir::npu
+
+namespace mlir {
+namespace npu {
+void registerTileMatmulPass() { PassRegistration<TileMatmulPass>(); }
+} // namespace npu
+} // namespace mlir
