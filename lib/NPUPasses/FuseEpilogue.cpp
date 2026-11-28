@@ -57,6 +57,19 @@ struct FuseEpiloguePass
     if (!matmulOp || !biasOp)
       return;
 
+    linalg::GenericOp reluOp;
+    func.walk([&](linalg::GenericOp gen) {
+      if (gen == biasOp || gen.getNumDpsInputs() != 1)
+        return;
+      bool hasMax = false;
+      gen.getBody()->walk([&](Operation *inner) {
+        if (isa<arith::MaximumFOp, arith::MaxNumFOp>(inner))
+          hasMax = true;
+      });
+      if (hasMax)
+        reluOp = gen;
+    });
+
     Location loc = matmulOp.getLoc();
     rewriter.setInsertionPoint(matmulOp);
 
@@ -215,11 +228,16 @@ struct FuseEpiloguePass
     newBias.getDpsInputOperand(1)->set(sramBias);
     newBias.getDpsInitOperand(0)->set(sramC);
 
+    if (reluOp)
+      npu::VecReluOp::create(rewriter, loc, sramC);
+
     Value tokStore = npu::DMAStore2DOp::create(
                          rewriter, loc, tokenTy, sramC, subC, c16, c16, c128)
                          .getToken();
     npu::DMAWaitOp::create(rewriter, loc, tokStore);
 
+    if (reluOp)
+      rewriter.eraseOp(reluOp);
     rewriter.eraseOp(biasOp);
     rewriter.eraseOp(matmulOp);
   }

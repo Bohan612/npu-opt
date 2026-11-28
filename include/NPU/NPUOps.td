@@ -70,4 +70,16 @@ def NPU_VecAddOp : NPU_Op<"vec_add", []> {
   let assemblyFormat = "$matrix_tile `,` $bias_tile attr-dict `:` type($matrix_tile) `,` type($bias_tile)";
 }
 
+def NPU_VecReluOp : NPU_Op<"vec_relu", []> {
+  let summary = "NPU 16x16 vector ReLU activation";
+  let description = [{
+    Applies an elementwise ReLU activation (max(x, 0)) in-place on a 16x16
+    matrix tile in SRAM after bias addition.
+  }];
+  let arguments = (ins
+    Arg<AnyMemRef, "the 16x16 SRAM matrix tile (in/out)", [MemRead, MemWrite]>:$matrix_tile
+  );
+  let assemblyFormat = "$matrix_tile attr-dict `:` type($matrix_tile)";
+}
+
 #endif // NPU_OPS_TD

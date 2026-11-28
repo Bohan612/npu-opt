@@ -7,6 +7,7 @@
 #define DMA_BYTES_PER_CYCLE 16
 #define CUBE_MMA_CYCLES     64
 #define VEC_ADD_CYCLES      16
+#define VEC_RELU_CYCLES     8
 
 typedef struct {
   uint64_t complete_cycle;
@@ -158,7 +159,27 @@ void npu_vec_add_c_harness(uint16_t *target, const uint16_t *bias) {
   g_total_vec_cycles += VEC_ADD_CYCLES;
 }
 
+void npu_vec_relu_c_harness(uint16_t *target) {
+  if (g_vec_clk < g_cube_clk) g_vec_clk = g_cube_clk;
+  for (int i = 0; i < 16; ++i) {
+    for (int j = 0; j < 16; ++j) {
+      float val = f16_to_f32(target[i * 16 + j]);
+      if (val < 0.0f) val = 0.0f;
+      target[i * 16 + j] = f32_to_f16(val);
+    }
+  }
+  g_vec_clk += VEC_RELU_CYCLES;
+  g_total_vec_cycles += VEC_RELU_CYCLES;
+}
+
 extern void matmul_bias(
+    void* A_alloc, void* A_aligned, int64_t A_offset, int64_t A_size0, int64_t A_size1, int64_t A_stride0, int64_t A_stride1,
+    void* B_alloc, void* B_aligned, int64_t B_offset, int64_t B_size0, int64_t B_size1, int64_t B_stride0, int64_t B_stride1,
+    void* C_alloc, void* C_aligned, int64_t C_offset, int64_t C_size0, int64_t C_size1, int64_t C_stride0, int64_t C_stride1,
+    void* bias_alloc, void* bias_aligned, int64_t bias_offset, int64_t bias_size0, int64_t bias_stride0
+);
+
+extern void matmul_bias_relu(
     void* A_alloc, void* A_aligned, int64_t A_offset, int64_t A_size0, int64_t A_size1, int64_t A_stride0, int64_t A_stride1,
     void* B_alloc, void* B_aligned, int64_t B_offset, int64_t B_size0, int64_t B_size1, int64_t B_stride0, int64_t B_stride1,
     void* C_alloc, void* C_aligned, int64_t C_offset, int64_t C_size0, int64_t C_size1, int64_t C_stride0, int64_t C_stride1,
@@ -183,12 +204,19 @@ int main() {
 
     printf("Dispatching Execution to NPU MLIR binary...\n");
     
-    matmul_bias(
+    for (int i = 0; i < 128; ++i) bias[i] = (i % 2 == 0) ? one_f16 : f32_to_f16(-200.0f);
+
+    printf("Dispatching Execution to NPU MLIR binary (matmul_bias_relu)...\n");
+
+    matmul_bias_relu(
         A, A, 0, 128, 128, 128, 1,
         B, B, 0, 128, 128, 128, 1,
         C, C, 0, 128, 128, 128, 1,
         bias, bias, 0, 128, 1
     );
+
+    printf("C[0] (positive bias +1.0 -> 129.0): %.1f (raw=0x%04x)\n", f16_to_f32(C[0]), C[0]);
+    printf("C[1] (negative bias -200.0 -> clamped to 0.0): %.1f (raw=0x%04x)\n", f16_to_f32(C[1]), C[1]);
 
     printf("NPU Execution Complete!\n\n");
     

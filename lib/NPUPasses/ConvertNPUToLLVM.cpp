@@ -260,6 +260,35 @@ struct NPUVecAddToLLVMPattern : public ConvertOpToLLVMPattern<npu::VecAddOp> {
   }
 };
 
+struct NPUVecReluToLLVMPattern : public ConvertOpToLLVMPattern<npu::VecReluOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+
+  LogicalResult
+  matchAndRewrite(npu::VecReluOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    auto module = op->getParentOfType<ModuleOp>();
+    auto voidType = LLVM::LLVMVoidType::get(rewriter.getContext());
+
+    MemRefDescriptor tileDesc(adaptor.getOperands()[0]);
+    auto tileMemRefType = cast<MemRefType>(op->getOperand(0).getType());
+    Type tileElemTy = typeConverter->convertType(tileMemRefType.getElementType());
+
+    Value tilePtr = LLVM::GEPOp::create(
+        rewriter, loc, tileDesc.alignedPtr(rewriter, loc).getType(), tileElemTy,
+        tileDesc.alignedPtr(rewriter, loc),
+        ValueRange{tileDesc.offset(rewriter, loc)});
+
+    auto fn = getOrInsertRuntimeFn(module, rewriter, "npu_vec_relu_c_harness",
+                                   voidType, {tilePtr.getType()});
+
+    LLVM::CallOp::create(rewriter, loc, fn, ValueRange{tilePtr});
+
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 struct LinalgMatmulToLLVMPattern : public ConvertOpToLLVMPattern<linalg::MatmulOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
 
@@ -330,7 +359,7 @@ public:
     patterns.add<DMALoadToLLVMPattern, DMALoad2DToLLVMPattern,
                  DMAStore2DToLLVMPattern, DMAWaitToLLVMPattern,
                  MMAToLLVMPattern, NPUVecAddToLLVMPattern,
-                 LinalgMatmulToLLVMPattern>(typeConverter);
+                 NPUVecReluToLLVMPattern, LinalgMatmulToLLVMPattern>(typeConverter);
 
     if (failed(applyPartialConversion(module, target, std::move(patterns))))
       signalPassFailure();
